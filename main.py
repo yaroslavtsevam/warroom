@@ -2,7 +2,9 @@
 from nicegui import app, ui
 import frost_sta_client as fsc
 import pyecharts.options as opts
-from pyecharts.charts import Line
+from pyecharts.charts import Line, Grid
+import pandas as pd
+import arrow
 
 #x_data = []
 #y_data_flow_amount = []
@@ -67,52 +69,145 @@ from pyecharts.charts import Line
 
 url = "http://94.154.11.74/frost/v1.1/"
 service = fsc.SensorThingsService(url)
-
-def callback_func(loaded_entities):
-    print("loaded {} entities!".format(loaded_entities))
+date_range_start = arrow.utcnow().shift(days=-3).format('YYYY-MM-DD')
+date_range_end = arrow.utcnow().format('YYYY-MM-DD')
 
 MDT = service.multi_datastreams().find('RudnMeteoRawDataMultiStream')
-Observations = MDT.get_observations().query().list().entities
-for observation in Observations:
-    print(arrow.get(observation.phenomenon_time).format('YYYY-MM-DD HH:mm:ss'))
-    print(observation.result)
+def FrostFilterQueryStringByDate(start_date, end_date):
+    filter_query_string = "phenomenonTime ge {0}T00:00:00+00:00 and phenomenonTime lt {1}T00:00:00+00:00".format(start_date,end_date)
+    return(filter_query_string)
+
+def GetFrostDataRUDNMeteo(MDT,start_date,end_date):
+    filter_query_string = FrostFilterQueryStringByDate(start_date,end_date)
+    Observations = MDT.get_observations().query()
+    Observations = Observations.filter(filter_query_string).list()
+    result_list = []
+    for observation in Observations:
+        result_list.append(observation.result+[arrow.get(observation.phenomenon_time).to('Europe/Moscow').format('YYYY-MM-DD HH:mm:ss')])
+    return result_list
+
+def FrostDataRUDNMeteoToDataFrame(result_list):
+    df = pd.DataFrame(result_list, columns = ['WinDir_min', 'WinDir_mean','WinDir_max',
+                                        'WinSpeed_min','WinSpeed_mean','WinSpeed_max',
+                                        'Tair','RH','P_atm','Pcum','Timestamp']) 
+    return(df)
+
+def graph_update():
+    result_list = GetFrostDataRUDNMeteo(MDT, date_range_start, date_range_end)
+    echart_line_graph_draw.refresh(result_list)
+#def update_dates(cache, value, index):
+#    cache[index]=value
+
+@ui.refreshable
+def echart_line_graph_draw(all_data) -> None:
+    ui.echart.from_pyecharts(
+        Line()
+        .add_xaxis(xaxis_data=[item[10] for item in all_data])
+        .add_yaxis(
+            series_name="Температура воздуха, С",
+            y_axis=[item[6] for item in all_data],
+            yaxis_index=0,
+            is_smooth=False,
+            is_symbol_show=False,
+        )
+        .set_global_opts(
+            title_opts=opts.TitleOpts(title="Метеостанция АТИ РУДН"),
+            tooltip_opts=opts.TooltipOpts(trigger="axis"),
+            datazoom_opts=[
+                opts.DataZoomOpts(xaxis_index=0, yaxis_index=1),
+                opts.DataZoomOpts(type_="slider"),
+                opts.DataZoomOpts(orient="vertical", pos_left=20)
+            ],
+            visualmap_opts=opts.VisualMapOpts(
+                pos_top="10",
+                pos_right="10",
+                is_piecewise=True,
+                pieces=[
+                    {"gt":  0, "lte":  5, "color": "#137cd1"},
+                    {"gt":  5, "lte": 10, "color": "#08d0e7"},
+                    {"gt": 10, "lte": 15, "color": "#0ef6df"},
+                    {"gt": 15, "lte": 20, "color": "#19c485"},
+                    {"gt": 20, "lte": 30, "color": "#249138"},
+                    {"gt": 30,            "color": "#d97b1c"},
+                ],
+                out_of_range={"color": "#999"},
+            ),
+            xaxis_opts=opts.AxisOpts(type_="category"),
+            yaxis_opts=opts.AxisOpts(
+                type_="value",
+                name_location="start",
+                is_scale=True,
+                axistick_opts=opts.AxisTickOpts(is_inside=False),
+            ),
+        )
+        .set_series_opts(
+            markline_opts=opts.MarkLineOpts(
+                data=[
+                    {"yAxis": 5},
+                    {"yAxis": 10},
+                    {"yAxis": 15},
+                    {"yAxis": 20},
+                    {"yAxis": 30},
+                ],symbol='none',
+                label_opts=opts.LabelOpts(position="end"),
+            )
+        )
+    )
+def start_date() -> None:
+    with ui.input('Date').bind_value(globals(), 'date_range_start') as date:
+        with ui.menu().props('no-parent-event') as menu:
+            with ui.date(on_change = graph_update).bind_value(date):
+                with ui.row().classes('justify-end'):
+                    ui.button('Close', on_click=menu.close).props('flat')
+        with date.add_slot('append'):
+            ui.icon('edit_calendar').on('click', menu.open).classes('cursor-pointer')
+    
+def end_date() -> None:
+    with ui.input('Date').bind_value(globals(), 'date_range_end') as date:
+        with ui.menu().props('no-parent-event') as menu:
+            with  ui.date(on_change = graph_update).bind_value(date):
+                with ui.row().classes('justify-end'):
+                    ui.button('Close', on_click=menu.close).props('flat')
+        with date.add_slot('append'):
+            ui.icon('edit_calendar').on('click', menu.open).classes('cursor-pointer')
+            
+
+#def update_date() 
+#    result_list = GetFrostDataRUDNMeteo(MDT, date_range['start'], date_range['end'])
+#    echart_line_graph_draw.refresh(result_list)
 
 
+    
+#cache = app.storage.client
+# arrow.utcnow().shift(days=-3).format('YYYY-MM-DD')
+#arrow.utcnow().format('YYYY-MM-DD')
+#print(cache['end_date'])
+result_list = GetFrostDataRUDNMeteo(MDT, date_range_start, date_range_end)
 with ui.header().classes(replace='row items-center') as header:
     ui.button(on_click=lambda: left_drawer.toggle(), icon='menu').props('flat color=white')
     with ui.tabs() as tabs:
-        ui.tab('A')
+        ui.tab('Метеостанция АТИ РУДН')
         ui.tab('B')
         ui.tab('C')
 
 with ui.footer(value=False) as footer:
-    ui.label('Footer')
+    ui.label('Эта штука работает @2024')
 
 with ui.left_drawer().classes('bg-blue-100') as left_drawer:
-    ui.label('Side menu')
+    ui.label('Какое-то меню')
 
 with ui.page_sticky(position='bottom-right', x_offset=20, y_offset=20):
     ui.button(on_click=footer.toggle, icon='contact_support').props('fab')
 
 with ui.tab_panels(tabs, value='A').classes('w-full'):
-    with ui.tab_panel('A'):
-        ui.label('Content of AAAAAA')
-        echart = ui.echart({
-            'xAxis': {'type': 'time', 'data': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']},
-            'yAxis': {'type': 'value'},
-            'series': [
-                            {
-                            'name': 'Fake Data',
-                            'type': 'line',
-                            'smooth': 'true',
-                            'symbol': 'none',
-                            'areaStyle': {},
-                            'data': [1,2,3,4,5]
-                            }
-                        ]
-        })
-        for obs in Observations:
-            ui.label("Result is: {}".format(obs.result))
+    with ui.tab_panel('Метеостанция АТИ РУДН'):
+        ui.label('Данные метеостанции')
+        with ui.row():
+            start_date()
+            end_date()
+        echart_line_graph_draw(result_list)
+
+
     with ui.tab_panel('B'):
         ui.label('Content of B')
     with ui.tab_panel('C'):
