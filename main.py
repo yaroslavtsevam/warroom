@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 from nicegui import app, ui
 import frost_sta_client as fsc
-import pyecharts.options as opts
-from pyecharts.charts import Line, Grid
-from pyecharts.globals import ThemeType
 import pandas as pd
 import arrow
 
@@ -26,13 +23,16 @@ def GetFrostDataRUDNMeteo(MDT,start_date,end_date):
     Observations = Observations.filter(filter_query_string).list(callback=ui_callback_func, step_size=1000)
     result_list = []
     for observation in Observations:
-        result_list.append(observation.result+[arrow.get(observation.phenomenon_time).to('Europe/Moscow').format('YYYY-MM-DD HH:mm:ss')])
+        result_list.append(observation.result+[int(arrow.get(observation.phenomenon_time).to('Europe/Moscow').timestamp()*1000),
+                                               arrow.get(observation.phenomenon_time).to('Europe/Moscow').format('YYYY-MM-DD HH:mm:ss')])
+
+    
     return result_list
 
 def FrostDataRUDNMeteoToDataFrame(result_list):
     df = pd.DataFrame(result_list, columns = ['WinDir_min', 'WinDir_mean','WinDir_max',
                                               'WinSpeed_min','WinSpeed_mean','WinSpeed_max',
-                                              'Tair','RH','P_atm','Pcum','Timestamp']) 
+                                              'Tair','RH','P_atm','Pcum','Timestamp','DateTime']) 
     return(df.to_csv(lineterminator='\r\n', index=False))
 
 def graph_update():
@@ -51,7 +51,7 @@ def graph_update():
     
 def update_var_index(upd_var_index):
     global_list = globals()
-    global_list['var_index']=upd_var_index
+    global_list['var_index'] = upd_var_index
     graph_update()
 
 
@@ -59,7 +59,6 @@ def get_data_from_frost():
     global_list = globals()
     global_list['result_list'] = []
     global_list['result_list']= GetFrostDataRUDNMeteo(MDT, date_range_start, date_range_end)
-    print(len(result_list)) 
     graph_update()
 
 def ui_callback_func(loaded_entities):
@@ -68,67 +67,83 @@ def ui_callback_func(loaded_entities):
 @ui.refreshable
 # Переписать нахер на классический echarts - pyechart - говно
 def echart_line_graph_draw(all_data,var_index) -> None:
+
     axis_name_list =['','Направление ветра, град','', 
                     '','Скорость ветра, м/с','', 
                     'Температура воздуха, С', 
                     'Влажность воздуха, %', 
                     'Атмосферное давление, гПа', 
-                    'Кумулята осадков, мм']
-    
-    graph_object = (
-    Line(init_opts=opts.InitOpts(theme=ThemeType.INFOGRAPHIC))
-    .add_xaxis(xaxis_data=[item[10] for item in all_data])
-    .add_yaxis(
-        series_name=axis_name_list[var_index],
-        y_axis=[item[var_index] for item in all_data],
-        yaxis_index=0,
-        is_smooth=False,
-        is_symbol_show=False,
-                    )
-    .set_global_opts(
-        title_opts=opts.TitleOpts(title="Метеостанция АТИ РУДН"),
-        tooltip_opts=opts.TooltipOpts(trigger="axis"),
-        datazoom_opts=[
-            opts.DataZoomOpts(xaxis_index=0, yaxis_index=1,range_start=0,range_end=100),
-            opts.DataZoomOpts(type_="slider"),
-            opts.DataZoomOpts(orient="vertical", pos_left=20)
-        ],
-        visualmap_opts=opts.VisualMapOpts(
-            pos_top="10",
-            pos_right="10",
-            is_piecewise=True,
-            pieces=[
-                {"gt":  0, "lte":  5, "color": "#137cd1"},
-                {"gt":  5, "lte": 10, "color": "#08d0e7"},
-                {"gt": 10, "lte": 15, "color": "#0ef6df"},
-                {"gt": 15, "lte": 20, "color": "#19c485"},
-                {"gt": 20, "lte": 30, "color": "#249138"},
-                {"gt": 30,            "color": "#d97b1c"},
-            ],
-            out_of_range={"color": "#999"},
-        ),
-        xaxis_opts=opts.AxisOpts(type_="category"),
-        yaxis_opts=opts.AxisOpts(
-            type_="value",
-            name_location="start",
-            is_scale=True,
-            axistick_opts=opts.AxisTickOpts(is_inside=False),
-        ),
-                    )
-    .set_series_opts(
-        markline_opts=opts.MarkLineOpts(
-            data=[
-                {"yAxis": 5},
-                {"yAxis": 10},
-                {"yAxis": 15},
-                {"yAxis": 20},
-                {"yAxis": 30},
-            ],symbol='none',
-            label_opts=opts.LabelOpts(position="end"),
-        )
-    ))
+                    'Кумулята осадков, мм','UnixTime','Дата']
+    print(all_data)
 
-    ui.echart.from_pyecharts(graph_object).props("height=600px")
+    graph_object = {
+          'dataset': {
+            'source':all_data,
+            'dimensions': axis_name_list,
+        },
+        'title': {
+            'left': 'center',
+            'text': axis_name_list[var_index]
+        },
+        'toolbox': {
+            'feature': {
+            'dataZoom': {
+                'yAxisIndex': 'none'
+            },
+            'restore': {},
+            'saveAsImage': {}
+            }
+        },
+        'xAxis': {
+            #'type':'category',
+            'type':'time',
+            'axisLabel': {
+                'formatter': '{yyyy}-{MM}-{dd} {HH}:{mm}'
+            }
+        },
+        'yAxis': {
+            'type': 'value',
+             'min': 'dataMin', 
+             'max': 'dataMax'
+        },
+        'dataZoom': [
+            {
+                'type': 'slider',
+                'xAxisIndex': 0,
+
+                },
+                {
+                'type': 'slider',
+                'yAxisIndex': 0,
+                'left': 20,
+
+                },
+                {
+                'type': 'inside',
+                'xAxisIndex': 0,
+
+                },
+                {
+                'type': 'inside',
+                'yAxisIndex': 0,
+
+                }
+        ],
+        'series': [
+            {
+            'name': axis_name_list[var_index],
+            'type': 'line',
+            'symbol': 'none',
+            'smooth': 'false',
+            'encode': {
+                'x': axis_name_list[10],
+                'y': axis_name_list[var_index]
+            }
+            }
+        ]
+    }
+    ui.echart(graph_object).style('height: 26rem')
+    #ui.echart.from_pyecharts(graph_object).props("height=600px")
 def start_date_select_ui() -> None:
     with ui.input('Дата начала периода').bind_value(globals(), 'date_range_start') as date:
         with ui.menu().props('no-parent-event') as menu:
@@ -153,9 +168,7 @@ def download_csv_button() -> None:
                   bytes(FrostDataRUDNMeteoToDataFrame(result_list), encoding='utf-8'), filename="output.csv"
                   )
     )
-#def update_date() 
-#    result_list = GetFrostDataRUDNMeteo(MDT, date_range['start'], date_range['end'])
-#    echart_line_graph_draw.refresh(result_list)
+
 
 
     
@@ -201,7 +214,7 @@ with ui.tab_panels(tabs, value='Метеостанция АТИ РУДН').class
         ui.label('Content of C')
 
 
-ui.run(title="TEST",
+ui.run(title="Тестирования тестирования",
        port=8080,
        show=True,
        reload=True,
